@@ -1,0 +1,33 @@
+@model IISPSupdate.Models.Project
+@{
+    ViewData["Title"] = "Start New Project";
+}
+
+<h2 class="mb-3">Start New Project</h2>
+
+<form asp-action="Create" method="post" class="card shadow-sm">
+    <div class="card-body">
+        <div class="mb-3">
+            <label asp-for="Name" class="form-label"></label>
+            <input asp-for="Name" class="form-control" />
+            <span asp-validation-for="Name" class="text-danger"></span>
+        </div>
+        <div class="mb-3">
+            <label asp-for="Description" class="form-label"></label>
+            <textarea asp-for="Description" class="form-control" rows="3"></textarea>
+        </div>
+        <div class="mb-3">
+            <label asp-for="ScanSource" class="form-label">Scan Source</label>
+            <select asp-for="ScanSource" class="form-select" asp-items="Html.GetEnumSelectList<IISPSupdate.Models.ScanSource>()"></select>
+        </div>
+    </div>
+    <div class="card-footer d-flex justify-content-between">
+        <a asp-action="Index" class="btn btn-outline-secondary">Cancel</a>
+        <button type="submit" class="btn btn-primary">Create Project</button>
+    </div>
+</form>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}
+

@@ -1,0 +1,42 @@
+@model IEnumerable<IISPSupdate.Controllers.ProjectListItem>
+@{
+    ViewData["Title"] = "Projects";
+}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0">Projects</h2>
+    <a asp-action="Create" class="btn btn-primary">Start New Project</a>
+</div>
+
+<table class="table table-hover align-middle">
+    <thead>
+        <tr>
+            <th>Id</th>
+            <th>Name</th>
+            <th>Scan Source</th>
+            <th>Preflight</th>
+            <th>Update</th>
+            <th>Created</th>
+            <th>Created By</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    @foreach (var p in Model)
+    {
+        <tr>
+            <td>@p.Id</td>
+            <td>@p.Name</td>
+            <td>@p.ScanSourceDisplay</td>
+            <td>@p.PreflightStatus</td>
+            <td>@p.UpdateStatus</td>
+            <td>@p.CreatedAtUtc.ToLocalTime()</td>
+            <td>@p.CreatedBy</td>
+            <td class="text-end">
+                <a asp-action="Wizard" asp-route-id="@p.Id" class="btn btn-sm btn-outline-secondary">Open</a>
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+

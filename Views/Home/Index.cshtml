@@ -1,0 +1,74 @@
+@model IISPSupdate.Controllers.HomeViewModel
+@{
+    ViewData["Title"] = "Home";
+}
+
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h6 class="text-uppercase text-muted mb-2">Projects</h6>
+                <h3 class="mb-0">@Model.TotalProjects</h3>
+                <p class="text-muted small mb-0">Total projects configured</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h6 class="text-uppercase text-muted mb-2">Servers updated (7 days)</h6>
+                <h3 class="mb-0">@Model.ServersUpdatedRecently</h3>
+                <p class="text-muted small mb-0">Successful run servers in last 7 days</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h6 class="text-uppercase text-muted mb-2">Actions</h6>
+                <a asp-controller="Projects" asp-action="Create" class="btn btn-primary mb-2">Start New Project</a>
+                <form asp-controller="Projects" asp-action="Open" method="get" class="d-flex gap-2">
+                    <input type="number" name="id" class="form-control" placeholder="Project ID" required />
+                    <button type="submit" class="btn btn-outline-secondary">Open</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-header">
+                Top KBs (all time)
+            </div>
+            <div class="card-body">
+                @if (!Model.TopKbs.Any())
+                {
+                    <p class="text-muted mb-0">No data yet. Create a project and run updates.</p>
+                }
+                else
+                {
+                    <table class="table table-sm align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>KB</th>
+                                <th class="text-end">Count</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var kb in Model.TopKbs)
+                        {
+                            <tr>
+                                <td>@kb.KbNumber</td>
+                                <td class="text-end">@kb.Count</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+

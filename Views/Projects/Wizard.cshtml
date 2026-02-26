@@ -1,0 +1,370 @@
+@model IISPSupdate.Models.Project
+@{
+    ViewData["Title"] = $"Project {Model.Id}: {Model.Name}";
+}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h2 class="mb-0">Project @Model.Id: @Model.Name</h2>
+        <div class="text-muted small">
+            Scan source: @(ViewBag.ScanSourceDisplay ?? Model.ScanSource.ToString()) | Created by @Model.CreatedBy on @Model.CreatedAtUtc.ToLocalTime()
+        </div>
+    </div>
+    <a asp-action="Index" class="btn btn-outline-secondary">Back to Projects</a>
+</div>
+
+<ul class="nav nav-tabs mb-3" id="wizardTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="servers-tab" data-bs-toggle="tab" data-bs-target="#servers-panel" type="button" role="tab">1. Servers</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="scan-tab" data-bs-toggle="tab" data-bs-target="#scan-panel" type="button" role="tab">2. Pre-flight &amp; Scan</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="select-tab" data-bs-toggle="tab" data-bs-target="#select-panel" type="button" role="tab">3. Select KBs</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="run-tab" data-bs-toggle="tab" data-bs-target="#run-panel" type="button" role="tab">4. Run</button>
+    </li>
+</ul>
+
+<div class="tab-content">
+    <div class="tab-pane fade show active" id="servers-panel" role="tabpanel" aria-labelledby="servers-tab">
+        <div class="card shadow-sm mb-3">
+            <div class="card-header">
+                Upload / paste servers
+            </div>
+            <div class="card-body">
+                <p class="text-muted small">
+                    Paste one server per line, or CSV <code>Name,Fqdn,Environment</code>. Optional header row is supported.
+                </p>
+                <div class="row">
+                    <div class="col-md-8">
+                        <textarea id="serversText" class="form-control monospace" rows="8" placeholder="server01
+server02.domain.local,server02.domain.local,Prod"></textarea>
+                        <div class="form-check mt-2">
+                            <input class="form-check-input" type="checkbox" id="hasHeader">
+                            <label class="form-check-label" for="hasHeader">
+                                First line is a header row
+                            </label>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <button class="btn btn-primary mb-2" type="button" onclick="importServers()">Import servers</button>
+                        <div id="serversStatus" class="small text-muted"></div>
+                        <hr />
+                        <h6>Current servers</h6>
+                        <ul class="list-unstyled" id="serversList">
+                            @foreach (var s in Model.Servers.OrderBy(s => s.Name))
+                            {
+                                <li>@s.Name (@s.Environment)</li>
+                            }
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="tab-pane fade" id="scan-panel" role="tabpanel" aria-labelledby="scan-tab">
+        <div class="card shadow-sm mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Pre-flight (DNS/WinRM) &amp; Scan</span>
+                <button class="btn btn-sm btn-primary" type="button" id="btnStartScan" onclick="startScan()">Start scan</button>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small">
+                    This will run basic connectivity checks and then a single PSWindowsUpdate scan against each server.
+                    Progress updates every few seconds; leave this tab open.
+                </p>
+                <div id="scanStatus" class="small mb-2 text-muted"></div>
+                <div id="scanLoading" class="mb-2" style="display: none;">
+                    <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                    <span class="ms-1">Scanning…</span>
+                </div>
+                <table class="table table-sm align-middle" id="scanTable">
+                    <thead>
+                        <tr>
+                            <th>Server</th>
+                            <th>Pre-flight</th>
+                            <th>Last scan</th>
+                            <th>Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- filled by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="tab-pane fade" id="select-panel" role="tabpanel" aria-labelledby="select-tab">
+        <div class="card shadow-sm mb-3">
+            <div class="card-header">
+                Select KBs
+            </div>
+            <div class="card-body">
+                <p class="text-muted small">
+                    Paste or type KB article IDs (e.g. <code>KB5035853</code>), separated by commas, semicolons, or new lines.
+                    These KBs will be applied to <strong>all servers in this project</strong>.
+                </p>
+                @if (TempData["SelectionMessage"] is string msg)
+                {
+                    <div class="alert alert-success py-2">@msg</div>
+                }
+                <form asp-action="ApplySelection" method="post" class="row g-3">
+                    <input type="hidden" name="id" value="@Model.Id" />
+                    <div class="col-md-8">
+                        <textarea name="kbList" class="form-control monospace" rows="6" placeholder="KB5035853;KB5035855"></textarea>
+                    </div>
+                    <div class="col-md-4 d-flex flex-column gap-2">
+                        <button type="submit" class="btn btn-primary">Apply selection to all servers</button>
+                        <button type="button" class="btn btn-outline-secondary" onclick="loadCandidates()">Load candidates from latest scan</button>
+                        <div id="candidateContainer" class="small mt-2"></div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="tab-pane fade" id="run-panel" role="tabpanel" aria-labelledby="run-tab">
+        <div class="card shadow-sm mb-3">
+            <div class="card-header">
+                Run options
+            </div>
+            <div class="card-body">
+                <form asp-action="StartRun" method="post" class="row g-3">
+                    <input type="hidden" name="id" value="@Model.Id" />
+                    <div class="col-md-3">
+                        <label class="form-label">Max concurrency</label>
+                        <input type="number" name="maxConcurrency" class="form-control" min="1" max="50" value="50" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Allow reboot</label>
+                        <select name="allowReboot" class="form-select">
+                            <option value="true" selected>Yes</option>
+                            <option value="false">No</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Online only</label>
+                        <select name="onlineOnly" class="form-select">
+                            <option value="true" selected>Yes</option>
+                            <option value="false">No</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Error policy</label>
+                        <select name="errorPolicy" class="form-select">
+                            <option value="StopOnError" selected>Stop on first error</option>
+                            <option value="ContinueOnError">Continue on error</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Schedule (UTC, optional)</label>
+                        <input type="datetime-local" name="scheduledForUtc" class="form-control" />
+                        <div class="form-text">
+                            If empty, run starts immediately. Use UTC for predictable scheduling.
+                        </div>
+                    </div>
+                    <div class="col-12 d-flex justify-content-between">
+                        <div class="text-muted small">
+                            Concurrency is capped at 50 worker threads by the Hangfire server.
+                        </div>
+                        <button type="submit" class="btn btn-success">Start run</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        const projectId = @Model.Id;
+        let scanInProgress = false;
+        let pollTimer = null;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            pollScanResults(true);
+        });
+
+        async function importServers() {
+            const content = document.getElementById('serversText').value;
+            const hasHeader = document.getElementById('hasHeader').checked;
+            const statusEl = document.getElementById('serversStatus');
+
+            statusEl.textContent = 'Importing...';
+
+            const response = await fetch(`/api/projects/${projectId}/servers/import`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ content, hasHeader })
+            });
+
+            if (!response.ok) {
+                statusEl.textContent = 'Import failed.';
+                return;
+            }
+
+            const data = await response.json();
+            statusEl.textContent = `Imported. Project now has ${data.serverCount ?? data.ServerCount} servers.`;
+            setTimeout(function() { location.reload(); }, 800);
+        }
+
+        async function startScan() {
+            const btn = document.getElementById('btnStartScan');
+            const statusEl = document.getElementById('scanStatus');
+            const loadingEl = document.getElementById('scanLoading');
+            if (scanInProgress || !btn) return;
+
+            btn.disabled = true;
+            scanInProgress = true;
+            loadingEl.style.display = 'block';
+            statusEl.textContent = 'Enqueuing scan job…';
+
+            const response = await fetch(`/api/projects/${projectId}/scan`, { method: 'POST' });
+            if (!response.ok) {
+                statusEl.textContent = 'Failed to enqueue scan.';
+                btn.disabled = false;
+                scanInProgress = false;
+                loadingEl.style.display = 'none';
+                return;
+            }
+
+            statusEl.textContent = 'Scan enqueued. Updating results…';
+            pollScanResults(false);
+        }
+
+        function renderScanTable(items) {
+            const tbody = document.querySelector('#scanTable tbody');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+            items.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${item.name}</td>
+                    <td>${item.preFlightStatus}</td>
+                    <td>${item.lastScan ? new Date(item.lastScan.scanTimeUtc).toLocaleString() : ''}</td>
+                    <td>${item.preFlightError ?? ''}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        async function pollScanResults(oneShot) {
+            const statusEl = document.getElementById('scanStatus');
+            const loadingEl = document.getElementById('scanLoading');
+            const btn = document.getElementById('btnStartScan');
+
+            try {
+                const response = await fetch(`/api/projects/${projectId}/scan`);
+                if (!response.ok) {
+                    statusEl.textContent = 'Failed to retrieve scan results.';
+                    if (btn) btn.disabled = false;
+                    scanInProgress = false;
+                    if (loadingEl) loadingEl.style.display = 'none';
+                    return;
+                }
+
+                const items = await response.json();
+                renderScanTable(items);
+
+                const allDone = items.length === 0 || items.every(i => i.preFlightStatus === 'Success' || i.preFlightStatus === 'Failed');
+                if (scanInProgress && allDone) {
+                    scanInProgress = false;
+                    if (btn) btn.disabled = false;
+                    if (loadingEl) loadingEl.style.display = 'none';
+                    statusEl.textContent = 'Scan completed. Last updated at ' + new Date().toLocaleTimeString();
+                    if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+                    updateWizardPhases(items);
+                    return;
+                }
+
+                if (oneShot) {
+                    statusEl.textContent = items.length ? 'Last updated at ' + new Date().toLocaleTimeString() : 'Add servers and run a scan.';
+                    updateWizardPhases(items);
+                    return;
+                }
+
+                statusEl.textContent = 'Last updated at ' + new Date().toLocaleTimeString();
+                pollTimer = setTimeout(function() { pollScanResults(false); }, 3000);
+            } catch {
+                statusEl.textContent = 'Error while polling scan results.';
+                if (btn) btn.disabled = false;
+                scanInProgress = false;
+                if (loadingEl) loadingEl.style.display = 'none';
+            }
+        }
+
+        async function loadCandidates() {
+            const container = document.getElementById('candidateContainer');
+            container.textContent = 'Loading candidates from last scan…';
+
+            try {
+                const response = await fetch(`/api/projects/${projectId}/scan`);
+                if (!response.ok) {
+                    container.textContent = 'Failed to load scan info.';
+                    return;
+                }
+
+                const items = await response.json();
+                const hasAnyScan = items.some(item => item.lastScan != null);
+                const kbCounts = {};
+
+                items.forEach(item => {
+                    const lastScan = item.lastScan || item.LastScan;
+                    if (!lastScan) return;
+                    const candidates = lastScan.candidates || lastScan.Candidates || [];
+                    candidates.forEach(c => {
+                        const kb = (c.kbNumber || c.KbNumber || '').toString().trim();
+                        if (!kb) return;
+                        kbCounts[kb] = (kbCounts[kb] || 0) + 1;
+                    });
+                });
+
+                const entries = Object.entries(kbCounts).sort((a, b) => b[1] - a[1]).slice(0, 50);
+                container.innerHTML = '';
+
+                if (!hasAnyScan) {
+                    container.textContent = 'Run a scan first.';
+                    return;
+                }
+                if (!entries.length) {
+                    container.textContent = 'Scan found no updates to install.';
+                    return;
+                }
+
+                const list = document.createElement('ul');
+                list.className = 'list-unstyled';
+                entries.forEach(([kb, count]) => {
+                    const li = document.createElement('li');
+                    li.textContent = `${kb} (${count} servers)`;
+                    list.appendChild(li);
+                });
+                container.appendChild(list);
+            } catch {
+                container.textContent = 'Error while loading candidates.';
+            }
+        }
+
+        function updateWizardPhases(items) {
+            const hasServers = items.length > 0;
+            const scanComplete = hasServers && items.every(i => i.preFlightStatus === 'Success' || i.preFlightStatus === 'Failed');
+            document.querySelectorAll('#wizardTabs .nav-link').forEach((el, idx) => {
+                const tabId = el.getAttribute('data-bs-target');
+                if (!tabId) return;
+                const isServers = tabId === '#servers-panel';
+                const isScan = tabId === '#scan-panel';
+                const isSelect = tabId === '#select-panel';
+                const isRun = tabId === '#run-panel';
+                const allow = isServers || (isScan && hasServers) || ((isSelect || isRun) && scanComplete);
+                el.classList.toggle('wizard-tab-disabled', !allow);
+                el.style.pointerEvents = allow ? '' : 'none';
+            });
+        }
+    </script>
+}
+

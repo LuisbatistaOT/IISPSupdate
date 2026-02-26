@@ -1,0 +1,130 @@
+@model IISPSupdate.Models.ProjectRun
+@{
+    ViewData["Title"] = $"Run {Model.Id}";
+}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h2 class="mb-0">Run @Model.Id</h2>
+        <div class="text-muted small">
+            Project @Model.ProjectId · Created by @Model.CreatedBy on @Model.CreatedAtUtc.ToLocalTime()
+        </div>
+    </div>
+    <div class="d-flex gap-2">
+        <a asp-controller="Projects" asp-action="Wizard" asp-route-id="@Model.ProjectId" class="btn btn-outline-secondary">Back to project</a>
+        <a href="@($"/api/runs/{Model.Id}/export")" class="btn btn-outline-primary" target="_blank">Export CSV</a>
+    </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Live status</span>
+        <div class="d-flex gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="refreshRun()">Refresh now</button>
+            <button type="button" class="btn btn-sm btn-outline-warning" onclick="retryFailed()">Retry failed</button>
+        </div>
+    </div>
+    <div class="card-body">
+        <div id="runSummary" class="mb-2 small text-muted"></div>
+        <table class="table table-sm align-middle" id="runTable">
+            <thead>
+                <tr>
+                    <th>Server</th>
+                    <th>Status</th>
+                    <th>Last updated</th>
+                    <th>Last error</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Filled by JS -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-header">
+        Log tail (selected server)
+    </div>
+    <div class="card-body">
+        <pre id="logTail" class="monospace small mb-0" style="white-space: pre-wrap; max-height: 300px; overflow-y: auto;"></pre>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        const runId = @Model.Id;
+        let currentLogServerId = null;
+
+        async function refreshRun() {
+            const summaryEl = document.getElementById('runSummary');
+            const tbody = document.querySelector('#runTable tbody');
+
+            try {
+                const response = await fetch(`/api/runs/${runId}`);
+                if (!response.ok) {
+                    summaryEl.textContent = 'Failed to load run info.';
+                    return;
+                }
+
+                const run = await response.json();
+                summaryEl.textContent = `Status: ${run.status} · Created ${new Date(run.createdAtUtc).toLocaleString()}`;
+
+                tbody.innerHTML = '';
+                run.servers.forEach(item => {
+                    const tr = document.createElement('tr');
+                    const pillClass =
+                        item.status === 'Success' ? 'status-pill status-pill-success' :
+                        item.status === 'Failed' ? 'status-pill status-pill-failed' :
+                        'status-pill status-pill-running';
+
+                    tr.innerHTML = `
+                        <td><button type="button" class="btn btn-link btn-sm p-0" onclick="showLog(${item.projectServerId})">${item.serverName}</button></td>
+                        <td><span class="${pillClass}">${item.status}</span></td>
+                        <td>${item.lastUpdatedUtc ? new Date(item.lastUpdatedUtc).toLocaleString() : ''}</td>
+                        <td>${item.lastError ?? ''}</td>`;
+                    tbody.appendChild(tr);
+                });
+            } catch {
+                summaryEl.textContent = 'Error while loading run info.';
+            }
+        }
+
+        async function showLog(serverId) {
+            currentLogServerId = serverId;
+            const logEl = document.getElementById('logTail');
+            logEl.textContent = 'Loading log...';
+
+            try {
+                const response = await fetch(`/api/runs/${runId}/logs?serverId=${serverId}`);
+                if (!response.ok) {
+                    logEl.textContent = 'Failed to load log.';
+                    return;
+                }
+
+                const items = await response.json();
+                if (!items.length) {
+                    logEl.textContent = 'No log available yet.';
+                    return;
+                }
+
+                logEl.textContent = items[0].logTail || '(empty)';
+            } catch {
+                logEl.textContent = 'Error while loading log.';
+            }
+        }
+
+        async function retryFailed() {
+            if (!confirm('Retry all failed servers in this run?')) {
+                return;
+            }
+
+            await fetch(`/api/runs/${runId}/retry-failed`, { method: 'POST' });
+            refreshRun();
+        }
+
+        setInterval(refreshRun, 5000);
+        refreshRun();
+    </script>
+}
+

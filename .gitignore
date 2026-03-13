@@ -1,0 +1,33 @@
+# Build outputs
+bin/
+obj/
+publish/
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Logs and temp
+*.log
+logs/
+*.tmp
+*.temp
+
+# IDE folders
+.vs/
+.vscode/
+
+# Node artifacts (if frontend tooling is added later)
+node_modules/
+
+# Secrets and local overrides
+appsettings.Development.json
+appsettings.Local.json
+*.secrets.json
+.env
+
+# OS files
+.DS_Store
+Thumbs.db

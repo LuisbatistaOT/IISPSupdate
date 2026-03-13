@@ -15,6 +15,12 @@ It coordinates scan, selection, install, and verify workflows using ASP.NET Core
   - Full setup, deployment, and operational guidance.
 - `MANIFEST.md` (this file)
   - Navigation map and contributor guidance.
+- `CONTRIBUTING.md`
+  - Branching, PR checklist, and coding expectations.
+- `CODE_OF_CONDUCT.md`
+  - Collaboration behavior standards.
+- `.gitignore`
+  - Source-control hygiene rules (build outputs, local settings, temp files).
 - `Webpage/`
   - Standalone landing and documentation pages served at `/Webpage/*`.
   - `index.html`: dashboard-style landing page.

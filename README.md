@@ -2,6 +2,14 @@
 
 > Delivery note: this project was built and iterated using a vibecode workflow in Cursor, with an AI coding agent (`gpt-5.3-codex`).
 
+### Project docs index
+
+- Setup and operations: `README.md`
+- Architecture map: `MANIFEST.md`
+- Contribution workflow: `CONTRIBUTING.md`
+- Community standards: `CODE_OF_CONDUCT.md`
+- In-app docs page: `/Webpage/docs.html`
+
 This intranet web application orchestrates Windows Update installations across project-based groups of servers using **PSWindowsUpdate**, **Hangfire**, and **EF Core** on **ASP.NET Core** behind **IIS with Windows Authentication**.
 
 ### Features

@@ -1,4 +1,6 @@
-## ADM SaaS Patch Orchestrator
+## Sloth - W2 Patch Manager
+
+> Delivery note: this project was built and iterated using a vibecode workflow in Cursor, with an AI coding agent (`gpt-5.3-codex`).
 
 This intranet web application orchestrates Windows Update installations across project-based groups of servers using **PSWindowsUpdate**, **Hangfire**, and **EF Core** on **ASP.NET Core** behind **IIS with Windows Authentication**.
 
@@ -348,4 +350,28 @@ Reference: [ASP.NET Core apps on IIS](https://learn.microsoft.com/aspnet/core/ho
 - Add additional safety rails:
   - Pre-check maintenance windows based on CMDB or external data.
   - Integrate WSUS approval workflows if required.
+
+---
+
+## Git workflow
+
+Recommended team workflow for this repository:
+
+- Create short-lived branches per change (feature/fix/docs).
+- Keep commits focused and descriptive (what changed and why).
+- Run `dotnet build` (and `dotnet publish` when relevant) before opening PRs.
+- Use PRs for review and approval before merging into the main branch.
+- Avoid committing local runtime artifacts (`bin/`, `obj/`, ad-hoc publish folders) unless intentionally required.
+
+Useful commands:
+
+```powershell
+git checkout -b feature/my-change
+git status
+git add .
+git commit -m "Describe change and reason"
+git push -u origin feature/my-change
+```
+
+For onboarding and architecture navigation, see `MANIFEST.md`.
 

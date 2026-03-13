@@ -19,6 +19,7 @@ public class PowerShellUpdateService
     private readonly ILogger<PowerShellUpdateService> _logger;
 
     private static readonly Regex KbRegex = new(@"KB\d{4,}", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private const string DefaultDomainSuffix = ".infra.mms";
 
     public PowerShellUpdateService(AppDbContext db, ILogger<PowerShellUpdateService> logger)
     {
@@ -37,9 +38,10 @@ public class PowerShellUpdateService
 
         var project = server.Project!;
 
-        var psScript = BuildScanScript(server.Name, project.ScanSource);
+        var targetComputer = ResolveComputerName(server);
+        var psScript = BuildScanScript(targetComputer, project.ScanSource);
 
-        _logger.LogInformation("Starting update scan for server {Server} in project {ProjectId}", server.Name, projectId);
+        _logger.LogInformation("Starting update scan for server {Server} ({Target}) in project {ProjectId}", server.Name, targetComputer, projectId);
 
         var output = await InvokePowerShellAsync(psScript, cancellationToken);
 
@@ -86,9 +88,10 @@ public class PowerShellUpdateService
             return;
         }
 
-        var psScript = BuildInstallScript(server.Name, kbList, run.AllowReboot);
+        var targetComputer = ResolveComputerName(server);
+        var psScript = BuildInstallScript(targetComputer, kbList, run.AllowReboot);
 
-        _logger.LogInformation("Starting Invoke-WUJob install for server {Server} in run {RunId}", server.Name, run.Id);
+        _logger.LogInformation("Starting Invoke-WUJob install for server {Server} ({Target}) in run {RunId}", server.Name, targetComputer, run.Id);
 
         var output = await InvokePowerShellAsync(psScript, cancellationToken);
 
@@ -116,9 +119,10 @@ public class PowerShellUpdateService
             return true;
         }
 
-        var psScript = BuildVerifyScript(server.Name, kbArray);
+        var targetComputer = ResolveComputerName(server);
+        var psScript = BuildVerifyScript(targetComputer, kbArray);
 
-        _logger.LogInformation("Starting verification for server {Server} with {Count} KBs", server.Name, kbArray.Length);
+        _logger.LogInformation("Starting verification for server {Server} ({Target}) with {Count} KBs", server.Name, targetComputer, kbArray.Length);
 
         var output = await InvokePowerShellAsync(psScript, cancellationToken);
 
@@ -253,6 +257,9 @@ if ($missing.Count -eq 0) {{
         return await Task.Run(() =>
         {
             using var ps = PowerShell.Create();
+            // Keep policy change process-scoped only; does not modify machine/user policy.
+            // This avoids module import failures under locked-down IIS/AppPool contexts.
+            ps.AddScript("try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction Stop } catch { }");
             ps.AddScript(script);
             ps.AddCommand("Out-String");
 
@@ -286,6 +293,21 @@ if ($missing.Count -eq 0) {{
         }
 
         return value[^maxLength..];
+    }
+
+    private static string ResolveComputerName(ProjectServer server)
+    {
+        if (!string.IsNullOrWhiteSpace(server.Fqdn))
+        {
+            return server.Fqdn;
+        }
+
+        if (server.Name.Contains('.', StringComparison.Ordinal))
+        {
+            return server.Name;
+        }
+
+        return server.Name + DefaultDomainSuffix;
     }
 }
 

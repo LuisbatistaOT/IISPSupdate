@@ -15,6 +15,7 @@ public class ProjectService
     private readonly PowerShellUpdateService _ps;
     private readonly IBackgroundJobClient _backgroundJobs;
     private readonly ILogger<ProjectService> _logger;
+    private const string DefaultDomainSuffix = ".infra.mms";
 
     public ProjectService(
         AppDbContext db,
@@ -42,7 +43,8 @@ public class ProjectService
     }
 
     /// <summary>
-    /// Hangfire job: performs DNS/WinRM/admin pre-flight and then scans all servers.
+    /// Hangfire job: performs WinRM/admin pre-flight and then scans all servers.
+    /// ICMP reachability is not required because many servers block ping while still allowing WinRM.
     /// </summary>
     public async Task ExecuteScanAsync(int projectId, CancellationToken cancellationToken)
     {
@@ -325,19 +327,15 @@ public class ProjectService
         server.PreFlightError = null;
         await _db.SaveChangesAsync(cancellationToken);
 
-        // Simple DNS + WinRM reachability pre-flight using Test-NetConnection and Test-WSMan.
+        // WinRM-focused pre-flight: do not fail on ICMP.
+        var targetComputer = ResolveComputerName(server);
         var script = $@"
-Write-Verbose ""Pre-flight checks for {server.Name}"" -Verbose
-
-$dns = Test-NetConnection -ComputerName '{server.Name}' -WarningAction SilentlyContinue
-if (-not $dns.PingSucceeded) {{
-    throw ""DNS/ICMP failed for {server.Name}""
-}}
+Write-Verbose ""Pre-flight checks for {targetComputer}"" -Verbose
 
 try {{
-    Test-WSMan -ComputerName '{server.Name}' -ErrorAction Stop | Out-Null
+    Test-WSMan -ComputerName '{targetComputer}' -ErrorAction Stop | Out-Null
 }} catch {{
-    throw ""WinRM connection failed for {server.Name}. Ensure Enable-PSRemoting has been run and firewall rules allow WinRM.""
+    throw ""WinRM connection failed for {targetComputer}. Ensure Enable-PSRemoting has been run and firewall rules allow WinRM. If using HTTP with default credentials, ensure Kerberos can resolve SPN via FQDN. Server updates are blocked until pre-flight succeeds.""
 }}
 ";
 
@@ -351,6 +349,21 @@ try {{
             var errors = string.Join(Environment.NewLine, ps.Streams.Error.Select(e => e.ToString()));
             throw new InvalidOperationException(errors);
         }
+    }
+
+    private static string ResolveComputerName(ProjectServer server)
+    {
+        if (!string.IsNullOrWhiteSpace(server.Fqdn))
+        {
+            return server.Fqdn;
+        }
+
+        if (server.Name.Contains('.', StringComparison.Ordinal))
+        {
+            return server.Name;
+        }
+
+        return server.Name + DefaultDomainSuffix;
     }
 }
 

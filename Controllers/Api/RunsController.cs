@@ -1,4 +1,5 @@
 using System.Text;
+using Hangfire;
 using IISPSupdate.Data;
 using IISPSupdate.Models;
 using IISPSupdate.Services;
@@ -106,6 +107,55 @@ public class RunsController : ControllerBase
 
         await _projectService.BulkRetryFailedAsync(runId, HttpContext.RequestAborted);
         return Accepted();
+    }
+
+    // POST /api/runs/{runId}/cancel-scheduled
+    [HttpPost("{runId:int}/cancel-scheduled")]
+    public async Task<IActionResult> CancelScheduled(int runId)
+    {
+        var run = await _db.ProjectRuns
+            .Include(r => r.Servers)
+            .SingleOrDefaultAsync(r => r.Id == runId);
+
+        if (run == null)
+        {
+            return NotFound();
+        }
+
+        var isScheduledFuture = run.Status == RunStatus.Queued
+            && run.ScheduledForUtc.HasValue
+            && run.ScheduledForUtc.Value > DateTime.UtcNow;
+
+        if (!isScheduledFuture)
+        {
+            return BadRequest("Only runs that are still scheduled for future execution can be cancelled.");
+        }
+
+        if (string.IsNullOrWhiteSpace(run.HangfireJobId))
+        {
+            return BadRequest("Run has no scheduled Hangfire job id.");
+        }
+
+        // Delete returns false when the job is not found (already dequeued/started/deleted).
+        // In that case we refuse to mark the run as cancelled to avoid inconsistent state.
+        var removed = BackgroundJob.Delete(run.HangfireJobId);
+        if (!removed)
+        {
+            return Conflict("Could not cancel the Hangfire job. It may have already started.");
+        }
+
+        // Keep application-level state aligned with Hangfire-level cancellation so
+        // run details and reports are accurate for operators and auditors.
+        run.Status = RunStatus.Cancelled;
+        run.Error = "Cancelled by user before scheduled execution.";
+        foreach (var rs in run.Servers.Where(s => s.Status == RunServerStatus.Queued))
+        {
+            rs.LastError = "Run cancelled before execution.";
+            rs.LastUpdatedUtc = DateTime.UtcNow;
+        }
+
+        await _db.SaveChangesAsync();
+        return Ok(new { run.Id, run.Status });
     }
 
     // GET /api/runs/{runId}/export

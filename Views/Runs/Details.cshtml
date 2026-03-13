@@ -13,6 +13,7 @@
     <div class="d-flex gap-2">
         <a asp-controller="Projects" asp-action="Wizard" asp-route-id="@Model.ProjectId" class="btn btn-outline-secondary">Back to project</a>
         <a href="@($"/api/runs/{Model.Id}/export")" class="btn btn-outline-primary" target="_blank">Export CSV</a>
+        <button type="button" id="btnCancelScheduled" class="btn btn-outline-danger d-none" onclick="cancelScheduledRun()">Cancel scheduled run</button>
     </div>
 </div>
 
@@ -55,10 +56,15 @@
     <script>
         const runId = @Model.Id;
         let currentLogServerId = null;
+        let refreshInProgress = false;
+        let refreshTimer = null;
 
         async function refreshRun() {
+            if (refreshInProgress) return;
+            refreshInProgress = true;
             const summaryEl = document.getElementById('runSummary');
             const tbody = document.querySelector('#runTable tbody');
+            const cancelBtn = document.getElementById('btnCancelScheduled');
 
             try {
                 const response = await fetch(`/api/runs/${runId}`);
@@ -68,7 +74,12 @@
                 }
 
                 const run = await response.json();
-                summaryEl.textContent = `Status: ${run.status} · Created ${new Date(run.createdAtUtc).toLocaleString()}`;
+                const scheduledText = run.scheduledForUtc ? ` · Scheduled ${new Date(run.scheduledForUtc).toLocaleString()}` : '';
+                summaryEl.textContent = `Status: ${run.status}${scheduledText} · Created ${new Date(run.createdAtUtc).toLocaleString()}`;
+                const canCancel = run.status === 'Queued' && run.scheduledForUtc && new Date(run.scheduledForUtc) > new Date();
+                if (cancelBtn) {
+                    cancelBtn.classList.toggle('d-none', !canCancel);
+                }
 
                 tbody.innerHTML = '';
                 run.servers.forEach(item => {
@@ -87,6 +98,8 @@
                 });
             } catch {
                 summaryEl.textContent = 'Error while loading run info.';
+            } finally {
+                refreshInProgress = false;
             }
         }
 
@@ -123,7 +136,35 @@
             refreshRun();
         }
 
-        setInterval(refreshRun, 5000);
+        async function cancelScheduledRun() {
+            if (!confirm('Cancel this scheduled run before it starts?')) {
+                return;
+            }
+
+            const response = await fetch(`/api/runs/${runId}/cancel-scheduled`, { method: 'POST' });
+            if (!response.ok) {
+                alert('Could not cancel scheduled run. It may have already started.');
+            }
+            refreshRun();
+        }
+
+        function scheduleRefresh() {
+            if (refreshTimer) clearTimeout(refreshTimer);
+            refreshTimer = setTimeout(async () => {
+                if (!document.hidden) {
+                    await refreshRun();
+                }
+                scheduleRefresh();
+            }, 12000);
+        }
+
+        document.addEventListener('visibilitychange', function () {
+            if (!document.hidden) {
+                refreshRun();
+            }
+        });
+
+        scheduleRefresh();
         refreshRun();
     </script>
 }

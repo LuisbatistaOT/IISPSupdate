@@ -51,6 +51,7 @@ server02.domain.local,server02.domain.local,Prod"></textarea>
                     </div>
                     <div class="col-md-4">
                         <button class="btn btn-primary mb-2" type="button" onclick="importServers()">Import servers</button>
+                        <button class="btn btn-outline-secondary mb-2" type="button" onclick="goToScanStep()">Next: Pre-flight &amp; Scan</button>
                         <div id="serversStatus" class="small text-muted"></div>
                         <hr />
                         <h6>Current servers</h6>
@@ -70,24 +71,30 @@ server02.domain.local,server02.domain.local,Prod"></textarea>
         <div class="card shadow-sm mb-3">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>Pre-flight (DNS/WinRM) &amp; Scan</span>
-                <button class="btn btn-sm btn-primary" type="button" id="btnStartScan" onclick="startScan()">Start scan</button>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-outline-secondary" type="button" onclick="downloadScanReport()">Download scan report</button>
+                    <button class="btn btn-sm btn-outline-secondary" type="button" id="btnNextToSelect" onclick="goToSelectStep()">Next: Select KBs</button>
+                    <button class="btn btn-sm btn-primary" type="button" id="btnStartScan" onclick="startScan()">Start scan</button>
+                </div>
             </div>
             <div class="card-body">
                 <p class="text-muted small">
-                    This will run basic connectivity checks and then a single PSWindowsUpdate scan against each server.
-                    Progress updates every few seconds; leave this tab open.
+                    This runs WinRM pre-flight checks and then a single PSWindowsUpdate scan against each server.
+                    Important: scan results may list KB candidates, but installs are blocked for any server with failed pre-flight until connectivity is fixed.
                 </p>
                 <div id="scanStatus" class="small mb-2 text-muted"></div>
                 <div id="scanLoading" class="mb-2" style="display: none;">
                     <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
                     <span class="ms-1">Scanning…</span>
                 </div>
+                <div id="preflightInstallWarning" class="alert alert-warning py-2 small" style="display: none;"></div>
                 <table class="table table-sm align-middle" id="scanTable">
                     <thead>
                         <tr>
                             <th>Server</th>
                             <th>Pre-flight</th>
                             <th>Last scan</th>
+                            <th>KBs available</th>
                             <th>Notes</th>
                         </tr>
                     </thead>
@@ -106,24 +113,48 @@ server02.domain.local,server02.domain.local,Prod"></textarea>
             </div>
             <div class="card-body">
                 <p class="text-muted small">
-                    Paste or type KB article IDs (e.g. <code>KB5035853</code>), separated by commas, semicolons, or new lines.
-                    These KBs will be applied to <strong>all servers in this project</strong>.
+                    Build the update package for this project. You can add KBs manually or load KB candidates from the latest scan.
+                    The selected KB list is applied to <strong>all servers in this project</strong>.
                 </p>
-                @if (TempData["SelectionMessage"] is string msg)
-                {
-                    <div class="alert alert-success py-2">@msg</div>
-                }
-                <form asp-action="ApplySelection" method="post" class="row g-3">
-                    <input type="hidden" name="id" value="@Model.Id" />
+                <div class="row g-3">
                     <div class="col-md-8">
-                        <textarea name="kbList" class="form-control monospace" rows="6" placeholder="KB5035853;KB5035855"></textarea>
+                        <label class="form-label">KB input</label>
+                        <div class="input-group">
+                            <input type="text" id="kbInput" class="form-control monospace" placeholder="KB5035853, KB5035855" />
+                            <button type="button" id="btnAddKbs" class="btn btn-primary" onclick="addKbFromInput()">Add KBs</button>
+                        </div>
+                        <div class="form-text">Use comma, semicolon, or whitespace as separator.</div>
                     </div>
                     <div class="col-md-4 d-flex flex-column gap-2">
-                        <button type="submit" class="btn btn-primary">Apply selection to all servers</button>
+                        <button type="button" class="btn btn-outline-primary" id="btnSaveSelection" onclick="saveSelection()">Save selection</button>
                         <button type="button" class="btn btn-outline-secondary" onclick="loadCandidates()">Load candidates from latest scan</button>
-                        <div id="candidateContainer" class="small mt-2"></div>
+                        <button type="button" class="btn btn-outline-secondary" id="btnClearSelection" onclick="clearSelection()">Clear selection</button>
                     </div>
-                </form>
+                </div>
+                <div class="mt-3">
+                    <h6>Selected KB summary</h6>
+                    <table class="table table-sm align-middle" id="selectedKbTable">
+                        <thead>
+                            <tr>
+                                <th>KB</th>
+                                <th>Description</th>
+                                <th>Category</th>
+                                <th>Recommended</th>
+                                <th>Source</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                    <div id="candidateContainer" class="small text-muted"></div>
+                </div>
+                <div class="mt-3 p-3 border rounded bg-light" id="selectionAnalysis" style="display:none;">
+                    <h6 class="mb-2">Selection analysis</h6>
+                    <div id="selectionAnalysisContent" class="small"></div>
+                </div>
+                <div class="mt-3 d-flex justify-content-end">
+                    <button type="button" class="btn btn-success" id="btnAnalyzeContinue" onclick="analyzeOrContinue()">Analyze and lock selection</button>
+                </div>
             </div>
         </div>
     </div>
@@ -185,9 +216,14 @@ server02.domain.local,server02.domain.local,Prod"></textarea>
         const projectId = @Model.Id;
         let scanInProgress = false;
         let pollTimer = null;
+        let latestScanItems = [];
+        let selectionLocked = false;
+        let analysisStageDone = false;
+        const selectedKbMap = new Map(); // key: KB, value: {kb,title,category,source}
 
         document.addEventListener('DOMContentLoaded', function() {
             pollScanResults(true);
+            renderSelectedKbTable();
         });
 
         async function importServers() {
@@ -212,7 +248,32 @@ server02.domain.local,server02.domain.local,Prod"></textarea>
 
             const data = await response.json();
             statusEl.textContent = `Imported. Project now has ${data.serverCount ?? data.ServerCount} servers.`;
-            setTimeout(function() { location.reload(); }, 800);
+            setTimeout(function() { goToScanStep(); location.reload(); }, 500);
+        }
+
+        function goToScanStep() {
+            const scanTabEl = document.querySelector('#scan-tab');
+            if (!scanTabEl) return;
+            const tab = bootstrap.Tab.getOrCreateInstance(scanTabEl);
+            tab.show();
+        }
+
+        function goToSelectStep() {
+            const selectTabEl = document.querySelector('#select-tab');
+            if (!selectTabEl || selectTabEl.classList.contains('wizard-tab-disabled')) return;
+            const tab = bootstrap.Tab.getOrCreateInstance(selectTabEl);
+            tab.show();
+        }
+
+        function goToRunStep() {
+            const runTabEl = document.querySelector('#run-tab');
+            if (!runTabEl || runTabEl.classList.contains('wizard-tab-disabled')) return;
+            const tab = bootstrap.Tab.getOrCreateInstance(runTabEl);
+            tab.show();
+        }
+
+        function downloadScanReport() {
+            window.open(`/api/projects/${projectId}/scan/export`, '_blank');
         }
 
         async function startScan() {
@@ -241,17 +302,47 @@ server02.domain.local,server02.domain.local,Prod"></textarea>
 
         function renderScanTable(items) {
             const tbody = document.querySelector('#scanTable tbody');
+            const warningEl = document.getElementById('preflightInstallWarning');
             if (!tbody) return;
             tbody.innerHTML = '';
+            let blockedCount = 0;
             items.forEach(item => {
+                const lastScan = item.lastScan || item.LastScan;
+                const preFlightStatus = item.preFlightStatus ?? item.PreFlightStatus;
+                const availableCount = item.availableKbCount ?? item.AvailableKbCount ?? 0;
+                const availableKbs = item.availableKbs ?? item.AvailableKbs ?? [];
+                let notes = item.preFlightError ?? '';
+                if (preFlightStatus === 'Failed') {
+                    blockedCount += 1;
+                    const reason = notes ? `${notes} ` : '';
+                    notes = `${reason}Install is blocked for this server until WinRM pre-flight succeeds.`;
+                }
+                if (!notes && lastScan) {
+                    const kbText = availableKbs.length ? ` [${availableKbs.join(', ')}]` : '';
+                    notes = availableCount > 0
+                        ? `Scan found ${availableCount} KB update(s).${kbText}`
+                        : 'Scan completed. No updates found.';
+                }
+
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td>${item.name}</td>
-                    <td>${item.preFlightStatus}</td>
-                    <td>${item.lastScan ? new Date(item.lastScan.scanTimeUtc).toLocaleString() : ''}</td>
-                    <td>${item.preFlightError ?? ''}</td>`;
+                    <td>${item.name ?? item.Name}</td>
+                    <td>${preFlightStatus}</td>
+                    <td>${lastScan ? new Date(lastScan.scanTimeUtc || lastScan.ScanTimeUtc).toLocaleString() : ''}</td>
+                    <td title="${availableKbs.join(', ')}">${availableCount}</td>
+                    <td>${notes}</td>`;
                 tbody.appendChild(tr);
             });
+
+            if (!warningEl) return;
+            if (blockedCount > 0) {
+                warningEl.style.display = 'block';
+                warningEl.textContent = `${blockedCount} server(s) have failed pre-flight. Those servers cannot be updated even if scan results show available KBs.`;
+                return;
+            }
+
+            warningEl.style.display = 'none';
+            warningEl.textContent = '';
         }
 
         async function pollScanResults(oneShot) {
@@ -270,9 +361,14 @@ server02.domain.local,server02.domain.local,Prod"></textarea>
                 }
 
                 const items = await response.json();
+                latestScanItems = items;
                 renderScanTable(items);
+                updateWizardPhases(items);
 
-                const allDone = items.length === 0 || items.every(i => i.preFlightStatus === 'Success' || i.preFlightStatus === 'Failed');
+                const allDone = items.length === 0 || items.every(i => {
+                    const st = i.preFlightStatus ?? i.PreFlightStatus;
+                    return st === 'Success' || st === 'Failed';
+                });
                 if (scanInProgress && allDone) {
                     scanInProgress = false;
                     if (btn) btn.disabled = false;
@@ -285,7 +381,6 @@ server02.domain.local,server02.domain.local,Prod"></textarea>
 
                 if (oneShot) {
                     statusEl.textContent = items.length ? 'Last updated at ' + new Date().toLocaleTimeString() : 'Add servers and run a scan.';
-                    updateWizardPhases(items);
                     return;
                 }
 
@@ -300,6 +395,7 @@ server02.domain.local,server02.domain.local,Prod"></textarea>
         }
 
         async function loadCandidates() {
+            if (selectionLocked) return;
             const container = document.getElementById('candidateContainer');
             container.textContent = 'Loading candidates from last scan…';
 
@@ -312,20 +408,8 @@ server02.domain.local,server02.domain.local,Prod"></textarea>
 
                 const items = await response.json();
                 const hasAnyScan = items.some(item => item.lastScan != null);
-                const kbCounts = {};
-
-                items.forEach(item => {
-                    const lastScan = item.lastScan || item.LastScan;
-                    if (!lastScan) return;
-                    const candidates = lastScan.candidates || lastScan.Candidates || [];
-                    candidates.forEach(c => {
-                        const kb = (c.kbNumber || c.KbNumber || '').toString().trim();
-                        if (!kb) return;
-                        kbCounts[kb] = (kbCounts[kb] || 0) + 1;
-                    });
-                });
-
-                const entries = Object.entries(kbCounts).sort((a, b) => b[1] - a[1]).slice(0, 50);
+                const metadata = collectCandidateMetadata(items);
+                const entries = Object.values(metadata).sort((a, b) => b.count - a.count).slice(0, 200);
                 container.innerHTML = '';
 
                 if (!hasAnyScan) {
@@ -337,22 +421,218 @@ server02.domain.local,server02.domain.local,Prod"></textarea>
                     return;
                 }
 
-                const list = document.createElement('ul');
-                list.className = 'list-unstyled';
-                entries.forEach(([kb, count]) => {
-                    const li = document.createElement('li');
-                    li.textContent = `${kb} (${count} servers)`;
-                    list.appendChild(li);
+                entries.forEach(item => {
+                    selectedKbMap.set(item.kb, {
+                        kb: item.kb,
+                        title: item.title || 'From scan result',
+                        category: item.category || 'Uncategorized',
+                        source: 'Scan'
+                    });
                 });
-                container.appendChild(list);
+
+                renderSelectedKbTable();
+                container.textContent = `Loaded ${entries.length} KB(s) from latest scan.`;
             } catch {
                 container.textContent = 'Error while loading candidates.';
             }
         }
 
+        function collectCandidateMetadata(items) {
+            const map = {};
+            items.forEach(item => {
+                const lastScan = item.lastScan || item.LastScan;
+                if (!lastScan) return;
+                const candidates = lastScan.candidates || lastScan.Candidates || [];
+                candidates.forEach(c => {
+                    const kb = (c.kbNumber || c.KbNumber || '').toUpperCase().trim();
+                    if (!kb) return;
+                    if (!map[kb]) {
+                        map[kb] = {
+                            kb,
+                            title: c.title || c.Title || '',
+                            category: c.category || c.Category || '',
+                            count: 0
+                        };
+                    }
+                    map[kb].count += 1;
+                });
+            });
+            return map;
+        }
+
+        function normalizeKb(token) {
+            if (!token) return '';
+            const trimmed = token.toUpperCase().replace(/[^A-Z0-9]/g, '');
+            if (!trimmed) return '';
+            if (trimmed.startsWith('KB')) return trimmed;
+            if (/^\d+$/.test(trimmed)) return `KB${trimmed}`;
+            return trimmed;
+        }
+
+        function addKbFromInput() {
+            if (selectionLocked) return;
+            const input = document.getElementById('kbInput');
+            const container = document.getElementById('candidateContainer');
+            const raw = (input?.value || '').trim();
+            if (!raw) return;
+
+            const tokens = raw.split(/[\s,;\n\r\t]+/).map(normalizeKb).filter(Boolean);
+            if (!tokens.length) {
+                container.textContent = 'No valid KB values found in input.';
+                return;
+            }
+
+            tokens.forEach(kb => {
+                if (!selectedKbMap.has(kb)) {
+                    selectedKbMap.set(kb, {
+                        kb,
+                        title: 'Manual entry',
+                        category: 'Manual',
+                        source: 'Manual'
+                    });
+                }
+            });
+
+            if (input) input.value = '';
+            renderSelectedKbTable();
+            container.textContent = `Added ${tokens.length} KB value(s).`;
+        }
+
+        function clearSelection() {
+            if (selectionLocked) return;
+            selectedKbMap.clear();
+            renderSelectedKbTable();
+            const container = document.getElementById('candidateContainer');
+            container.textContent = 'Selection cleared.';
+        }
+
+        function getRecommendation(entry) {
+            const combined = `${entry.title || ''} ${entry.category || ''}`.toLowerCase();
+            if (/(office|preview|driver|qol|optional|feature pack|language pack)/i.test(combined)) {
+                return 'Not recommended';
+            }
+            if (/(security|critical|cumulative|servicing stack|definition|quality)/i.test(combined)) {
+                return 'Recommended';
+            }
+            return 'Review';
+        }
+
+        function renderSelectedKbTable() {
+            const tbody = document.querySelector('#selectedKbTable tbody');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+
+            const entries = Array.from(selectedKbMap.values()).sort((a, b) => a.kb.localeCompare(b.kb));
+            entries.forEach(entry => {
+                const recommendation = getRecommendation(entry);
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${entry.kb}</td>
+                    <td>${entry.title || ''}</td>
+                    <td>${entry.category || ''}</td>
+                    <td>${recommendation}</td>
+                    <td>${entry.source}</td>
+                    <td>${selectionLocked ? '' : `<button type="button" class="btn btn-sm btn-outline-danger" onclick="removeSelectedKb('${entry.kb}')">X</button>`}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function removeSelectedKb(kb) {
+            if (selectionLocked) return;
+            selectedKbMap.delete(kb);
+            renderSelectedKbTable();
+        }
+
+        async function saveSelection() {
+            const container = document.getElementById('candidateContainer');
+            const serverIds = latestScanItems.map(s => s.serverId ?? s.ServerId).filter(Boolean);
+            const entries = Array.from(selectedKbMap.values());
+
+            if (!entries.length) {
+                container.textContent = 'Add or load at least one KB first.';
+                return false;
+            }
+            if (!serverIds.length) {
+                container.textContent = 'No servers found in project. Import servers first.';
+                return false;
+            }
+
+            const payload = [];
+            serverIds.forEach(serverId => {
+                entries.forEach(entry => {
+                    payload.push({
+                        projectServerId: serverId,
+                        kbNumber: entry.kb,
+                        title: entry.title || entry.kb,
+                        category: entry.category || null
+                    });
+                });
+            });
+
+            const response = await fetch(`/api/projects/${projectId}/selections`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                container.textContent = 'Failed to save KB selection.';
+                return false;
+            }
+
+            container.textContent = `Saved ${entries.length} KB(s) for ${serverIds.length} server(s).`;
+            return true;
+        }
+
+        async function analyzeOrContinue() {
+            const button = document.getElementById('btnAnalyzeContinue');
+            const analysisBox = document.getElementById('selectionAnalysis');
+            const analysisContent = document.getElementById('selectionAnalysisContent');
+
+            if (analysisStageDone) {
+                goToRunStep();
+                return;
+            }
+
+            const saved = await saveSelection();
+            if (!saved) return;
+
+            const entries = Array.from(selectedKbMap.values());
+            const notRecommended = entries.filter(e => getRecommendation(e) === 'Not recommended');
+            const likelyRestart = entries.some(e => !/definition/i.test((e.category || '').toLowerCase()));
+            const estimatedGb = Math.max(0.2, entries.length * 0.65).toFixed(1);
+            const estimatedMinutes = Math.max(10, entries.length * 6);
+
+            analysisContent.innerHTML = `
+                <div><strong>Total KBs selected:</strong> ${entries.length}</div>
+                <div><strong>Estimated download size:</strong> ~${estimatedGb} GB</div>
+                <div><strong>Estimated install time:</strong> ~${estimatedMinutes} minutes (environment dependent)</div>
+                <div><strong>Potentially not recommended:</strong> ${notRecommended.length}</div>
+                <div><strong>Likely restart required:</strong> ${likelyRestart ? 'Yes' : 'No'}</div>
+                <div class="mt-2"><strong>Not recommended KBs:</strong> ${notRecommended.map(x => x.kb).join(', ') || 'None'}</div>`;
+
+            analysisBox.style.display = 'block';
+
+            selectionLocked = true;
+            analysisStageDone = true;
+            ['kbInput', 'btnAddKbs', 'btnSaveSelection', 'btnClearSelection'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = true;
+            });
+
+            button.textContent = 'Continue to Run';
+        }
+
         function updateWizardPhases(items) {
             const hasServers = items.length > 0;
-            const scanComplete = hasServers && items.every(i => i.preFlightStatus === 'Success' || i.preFlightStatus === 'Failed');
+            const scanComplete = hasServers && items.every(i => {
+                const st = i.preFlightStatus ?? i.PreFlightStatus;
+                return st === 'Success' || st === 'Failed';
+            });
+            const nextBtn = document.getElementById('btnNextToSelect');
+            if (nextBtn) {
+                nextBtn.disabled = !scanComplete;
+            }
             document.querySelectorAll('#wizardTabs .nav-link').forEach((el, idx) => {
                 const tabId = el.getAttribute('data-bs-target');
                 if (!tabId) return;

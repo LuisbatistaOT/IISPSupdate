@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text;
 using IISPSupdate.Data;
 using IISPSupdate.Models;
 using IISPSupdate.Services;
@@ -42,6 +43,52 @@ public class ProjectsController : ControllerBase
             .ToListAsync();
 
         return Ok(projects);
+    }
+
+    // GET /api/projects/dashboard
+    [HttpGet("dashboard")]
+    public async Task<IActionResult> GetDashboardSummary()
+    {
+        var now = DateTime.UtcNow;
+        var recentCutoff = now.AddDays(-7);
+
+        var totalProjects = await _db.Projects.CountAsync();
+        var serversUpdated = await _db.ProjectRunServers
+            .CountAsync(rs => rs.Status == RunServerStatus.Success && rs.LastUpdatedUtc >= recentCutoff);
+
+        // Pending updates should reflect "current risk", not historical scans.
+        // For that reason we compute distinct KBs from only the latest scan of each server.
+        var latestScanIds = _db.ServerScanResults
+            .GroupBy(r => r.ProjectServerId)
+            .Select(g => g.OrderByDescending(r => r.ScanTimeUtc).Select(r => r.Id).FirstOrDefault());
+
+        var pendingUpdates = await _db.UpdateCandidates
+            .Where(c => latestScanIds.Contains(c.ServerScanResultId))
+            .Select(c => c.KbNumber)
+            .Where(k => !string.IsNullOrWhiteSpace(k))
+            .Distinct()
+            .CountAsync();
+
+        // Top KBs are based on selected KBs across projects/runs, which is typically
+        // the most useful long-term operational signal for patch planning.
+        var topKbs = await _db.ServerSelections
+            .GroupBy(s => s.KbNumber)
+            .OrderByDescending(g => g.Count())
+            .Take(10)
+            .Select(g => new
+            {
+                Kb = g.Key,
+                Count = g.Count()
+            })
+            .ToListAsync();
+
+        return Ok(new
+        {
+            TotalProjects = totalProjects,
+            ServersUpdated = serversUpdated,
+            PendingUpdates = pendingUpdates,
+            TopKbs = topKbs
+        });
     }
 
     // GET /api/projects/{id}
@@ -176,16 +223,98 @@ public class ProjectsController : ControllerBase
             return NotFound();
         }
 
-        var result = project.Servers.Select(s => new
+        var result = project.Servers.Select(s =>
         {
-            ServerId = s.Id,
-            s.Name,
-            s.PreFlightStatus,
-            s.PreFlightError,
-            LastScan = s.ScanResults.OrderByDescending(r => r.ScanTimeUtc).FirstOrDefault()
+            var lastScan = s.ScanResults.OrderByDescending(r => r.ScanTimeUtc).FirstOrDefault();
+            var kbList = lastScan?.Candidates
+                .Select(c => c.KbNumber)
+                .Where(k => !string.IsNullOrWhiteSpace(k))
+                .Distinct()
+                .OrderBy(k => k)
+                .ToList() ?? new List<string>();
+            var lastScanDto = lastScan == null
+                ? null
+                : new
+                {
+                    lastScan.Id,
+                    lastScan.ScanTimeUtc,
+                    lastScan.ScanSource,
+                    Candidates = lastScan.Candidates.Select(c => new
+                    {
+                        c.KbNumber,
+                        c.Title,
+                        c.Category,
+                        c.Severity
+                    }).ToList()
+                };
+
+            return new
+            {
+                ServerId = s.Id,
+                s.Name,
+                s.PreFlightStatus,
+                s.PreFlightError,
+                LastScan = lastScanDto,
+                AvailableKbCount = kbList.Count,
+                AvailableKbs = kbList
+            };
         });
 
         return Ok(result);
+    }
+
+    // GET /api/projects/{id}/scan/export
+    [HttpGet("{id:int}/scan/export")]
+    public async Task<IActionResult> ExportScanResults(int id)
+    {
+        var project = await _db.Projects
+            .Include(p => p.Servers)
+            .ThenInclude(s => s.ScanResults)
+            .ThenInclude(r => r.Candidates)
+            .SingleOrDefaultAsync(p => p.Id == id);
+
+        if (project == null)
+        {
+            return NotFound();
+        }
+
+        var sb = new StringBuilder();
+        sb.AppendLine("ProjectId,Server,PreFlightStatus,PreFlightError,ScanTimeUtc,KB,Title,Category,Severity");
+
+        foreach (var server in project.Servers.OrderBy(s => s.Name))
+        {
+            var lastScan = server.ScanResults.OrderByDescending(r => r.ScanTimeUtc).FirstOrDefault();
+            if (lastScan == null || !lastScan.Candidates.Any())
+            {
+                sb.AppendLine(string.Join(",",
+                    id,
+                    Csv(server.Name),
+                    server.PreFlightStatus,
+                    Csv(server.PreFlightError ?? string.Empty),
+                    lastScan?.ScanTimeUtc.ToString("o") ?? string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty));
+                continue;
+            }
+
+            foreach (var c in lastScan.Candidates.OrderBy(c => c.KbNumber))
+            {
+                sb.AppendLine(string.Join(",",
+                    id,
+                    Csv(server.Name),
+                    server.PreFlightStatus,
+                    Csv(server.PreFlightError ?? string.Empty),
+                    lastScan.ScanTimeUtc.ToString("o"),
+                    Csv(c.KbNumber),
+                    Csv(c.Title),
+                    Csv(c.Category ?? string.Empty),
+                    Csv(c.Severity ?? string.Empty)));
+            }
+        }
+
+        return File(Encoding.UTF8.GetBytes(sb.ToString()), "text/csv", $"project-{id}-scan-report.csv");
     }
 
     // GET /api/projects/{id}/selections
@@ -291,6 +420,16 @@ public class ProjectsController : ControllerBase
             HttpContext.RequestAborted);
 
         return Accepted(new { run.Id, run.Status, run.HangfireJobId });
+    }
+
+    private static string Csv(string value)
+    {
+        if (value.Contains(',') || value.Contains('"') || value.Contains('\n') || value.Contains('\r'))
+        {
+            return "\"" + value.Replace("\"", "\"\"") + "\"";
+        }
+
+        return value;
     }
 }
 

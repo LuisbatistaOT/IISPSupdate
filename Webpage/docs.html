@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sloth - W2 Patch Manager Documentation</title>
+    <link rel="icon" type="image/png" href="/assets/favicon" />
+    <link rel="stylesheet" href="css/style.css" />
+    <style>
+        .docs-shell {
+            max-width: 1120px;
+            margin: 0 auto;
+            padding: 1.6rem 1.25rem 2.5rem;
+            display: grid;
+            gap: 1rem;
+        }
+
+        .docs-grid {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            gap: 1rem;
+            align-items: start;
+        }
+
+        .docs-nav {
+            position: sticky;
+            top: 82px;
+        }
+
+        .docs-nav a {
+            display: block;
+            margin-bottom: 0.45rem;
+            color: var(--green-main);
+            text-decoration: none;
+            font-size: 0.92rem;
+        }
+
+        .docs-nav a:hover {
+            text-decoration: underline;
+        }
+
+        .docs-content h2 {
+            margin: 0 0 0.6rem;
+            font-size: 1.25rem;
+        }
+
+        .docs-content h3 {
+            margin: 1rem 0 0.45rem;
+            font-size: 1.02rem;
+            color: var(--text);
+        }
+
+        .docs-content p,
+        .docs-content li {
+            color: var(--text);
+            font-size: 0.94rem;
+        }
+
+        .docs-content ul {
+            margin: 0.25rem 0 0.45rem 1.1rem;
+            padding: 0;
+        }
+
+        .docs-content code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            background: #f0f4f2;
+            padding: 0.1rem 0.35rem;
+            border-radius: 6px;
+        }
+
+        .note,
+        .warning {
+            border-radius: 10px;
+            padding: 0.7rem 0.8rem;
+            margin-top: 0.5rem;
+        }
+
+        .note {
+            background: #eef5f2;
+            border-left: 4px solid var(--sky);
+        }
+
+        .warning {
+            background: #fff3e7;
+            border-left: 4px solid var(--earth);
+        }
+
+        @media (max-width: 980px) {
+            .docs-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .docs-nav {
+                position: static;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="top-nav">
+        <div class="top-nav-inner">
+            <div class="brand">
+                <img src="/assets/logo" alt="Sloth logo" class="brand-logo" />
+                <div class="brand-text">Sloth - W2 Patch Manager</div>
+            </div>
+            <nav class="top-nav-links" aria-label="Primary">
+                <a href="/Webpage/index.html">Dashboard</a>
+                <a href="/hangfire" target="_blank" rel="noopener noreferrer">Hangfire</a>
+                <a href="/Projects">Projects</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="docs-shell">
+        <section class="card">
+            <h1 style="margin: 0 0 0.4rem;">Documentation</h1>
+            <p style="margin: 0; color: var(--muted);">
+                End-to-end guide for setup, daily operations, and troubleshooting of the PS Patch Orchestrator stack.
+            </p>
+        </section>
+
+        <section class="docs-grid">
+            <aside class="card docs-nav">
+                <h3 style="margin-top: 0;">Contents</h3>
+                <a href="#overview">1. Overview</a>
+                <a href="#architecture">2. Technology & Architecture</a>
+                <a href="#prerequisites">3. Prerequisites</a>
+                <a href="#identity-auth">4. Identity, Auth, and Service Accounts</a>
+                <a href="#deployment">5. Deployment and Hosting</a>
+                <a href="#database">6. Database Setup</a>
+                <a href="#winrm">7. WinRM and Target Server Prep</a>
+                <a href="#usage">8. How to Use the App</a>
+                <a href="#hangfire">9. Hangfire Operations</a>
+                <a href="#debug">10. Debugging and Logs</a>
+                <a href="#troubleshooting">11. Common Issues and Fixes</a>
+                <a href="#hardening">12. Recommended Hardening</a>
+            </aside>
+
+            <article class="card docs-content">
+                <section id="overview">
+                    <h2>1. Overview</h2>
+                    <p>
+                        This tool orchestrates Windows patching in controlled project runs. It scans target servers for available KB updates,
+                        lets operators choose update selections, executes installs with background jobs, and verifies outcomes after reboot.
+                    </p>
+                </section>
+
+                <section id="architecture">
+                    <h2>2. Technology & Architecture</h2>
+                    <h3>Core stack</h3>
+                    <ul>
+                        <li>Backend: ASP.NET Core MVC + API (.NET 8)</li>
+                        <li>Database: SQL Server via EF Core</li>
+                        <li>Background processing: Hangfire with SQL storage</li>
+                        <li>Automation: PowerShell hosted with <code>System.Management.Automation</code></li>
+                        <li>Update execution: PSWindowsUpdate and <code>Invoke-WUJob</code> on targets</li>
+                        <li>Auth model: IIS Windows Authentication (Anonymous disabled)</li>
+                    </ul>
+                    <h3>High-level flow</h3>
+                    <ul>
+                        <li>Create project and import servers</li>
+                        <li>Run pre-flight WinRM checks and scan for KB candidates</li>
+                        <li>Select KBs and save selection</li>
+                        <li>Start run (immediate or scheduled)</li>
+                        <li>Monitor progress in live run page and Hangfire</li>
+                        <li>Verify install outcomes and export reports</li>
+                    </ul>
+                </section>
+
+                <section id="prerequisites">
+                    <h2>3. Prerequisites</h2>
+                    <ul>
+                        <li>IIS host reachable by operators (intranet)</li>
+                        <li>.NET Hosting Bundle installed on IIS host</li>
+                        <li>SQL Server reachable by application identity</li>
+                        <li>Hangfire tables and app schema deployed</li>
+                        <li>PowerShell/PSWindowsUpdate available for orchestration behavior</li>
+                        <li>Network connectivity from app host to targets on WinRM ports</li>
+                    </ul>
+                    <div class="note">
+                        Keep pre-production and production environments with separate SQL databases and appsettings.
+                    </div>
+                </section>
+
+                <section id="identity-auth">
+                    <h2>4. Identity, Auth, and Service Accounts</h2>
+                    <h3>IIS authentication</h3>
+                    <ul>
+                        <li>Enable Windows Authentication</li>
+                        <li>Disable Anonymous Authentication</li>
+                    </ul>
+                    <h3>App pool identity</h3>
+                    <ul>
+                        <li>Use a managed service account or dedicated domain service account (recommended)</li>
+                        <li>Avoid using personal user accounts for production app pools</li>
+                        <li>Grant minimum SQL rights needed for app + Hangfire operations</li>
+                    </ul>
+                    <h3>Kerberos and naming</h3>
+                    <ul>
+                        <li>Use FQDNs for targets whenever possible</li>
+                        <li>Validate SPN resolution and DNS correctness</li>
+                        <li>Avoid relying on TrustedHosts as a primary domain strategy</li>
+                    </ul>
+                </section>
+
+                <section id="deployment">
+                    <h2>5. Deployment and Hosting</h2>
+                    <ul>
+                        <li>Publish app from build host: <code>dotnet publish -c Release</code></li>
+                        <li>Copy publish folder to IIS site path</li>
+                        <li>Verify IIS site binding and app pool assignment</li>
+                        <li>Confirm static path <code>/Webpage/index.html</code> loads (dashboard landing)</li>
+                    </ul>
+                    <div class="warning">
+                        If you get HTTP 500 immediately, check IIS stdout logs and Windows Event Viewer first.
+                    </div>
+                </section>
+
+                <section id="database">
+                    <h2>6. Database Setup</h2>
+                    <ul>
+                        <li>Apply schema in correct order (or EF migration script) with cascade-safe constraints</li>
+                        <li>Verify permissions for app identity on target DB</li>
+                        <li>Set proper connection strings for app DB and Hangfire storage</li>
+                        <li>Use retry-enabled SQL options and sensible pool sizing</li>
+                    </ul>
+                    <h3>Known good checks</h3>
+                    <ul>
+                        <li>App starts and homepage loads without DB exception</li>
+                        <li>Hangfire dashboard loads and shows storage initialized</li>
+                        <li>Projects can be created and persisted</li>
+                    </ul>
+                </section>
+
+                <section id="winrm">
+                    <h2>7. WinRM and Target Server Prep</h2>
+                    <h3>Target host prerequisites</h3>
+                    <ul>
+                        <li>WinRM service running and listener present (<code>5985</code> and/or <code>5986</code>)</li>
+                        <li>Firewall allows inbound WinRM from app host network</li>
+                        <li>Remote management policy applied consistently (GPO preferred)</li>
+                        <li>PowerShell remoting enabled (<code>Enable-PSRemoting</code>)</li>
+                    </ul>
+                    <h3>Connectivity tests (from app host)</h3>
+                    <ul>
+                        <li><code>Resolve-DnsName target.fqdn</code></li>
+                        <li><code>Test-NetConnection target.fqdn -Port 5985</code></li>
+                        <li><code>Test-WSMan target.fqdn</code></li>
+                        <li><code>Enter-PSSession -ComputerName target.fqdn -Authentication Kerberos</code></li>
+                    </ul>
+                    <div class="warning">
+                        Scan success does not guarantee installability. If pre-flight fails, updates are intentionally blocked.
+                    </div>
+                </section>
+
+                <section id="usage">
+                    <h2>8. How to Use the App</h2>
+                    <h3>Typical operator workflow</h3>
+                    <ul>
+                        <li>Create project and import server list</li>
+                        <li>Run pre-flight and scan</li>
+                        <li>Review candidates and select KBs</li>
+                        <li>Analyze selection and start run</li>
+                        <li>Track progress on run details page</li>
+                        <li>Retry failed targets or export reports</li>
+                    </ul>
+                    <h3>Scheduled runs</h3>
+                    <ul>
+                        <li>Set future UTC schedule during run creation</li>
+                        <li>Cancel before execution from Run Details via <em>Cancel scheduled run</em></li>
+                    </ul>
+                </section>
+
+                <section id="hangfire">
+                    <h2>9. Hangfire Operations</h2>
+                    <ul>
+                        <li>Dashboard URL: <code>/hangfire</code></li>
+                        <li>Queues include: <code>scan</code>, <code>install</code>, <code>verify</code>, <code>default</code></li>
+                        <li>Use dashboard to inspect processing, retries, failures, and server health</li>
+                        <li>App now supports explicit API/UI cancellation for scheduled runs before start</li>
+                    </ul>
+                </section>
+
+                <section id="debug">
+                    <h2>10. Debugging and Logs</h2>
+                    <h3>Where to look first</h3>
+                    <ul>
+                        <li>Run Details page server-level status and log tail</li>
+                        <li>Hangfire job details and exception traces</li>
+                        <li>IIS stdout logs and Windows Event Viewer</li>
+                        <li>SQL connectivity/authentication errors in app logs</li>
+                    </ul>
+                    <h3>Quick diagnostic matrix</h3>
+                    <ul>
+                        <li>Build/publish issues: verify SDK, restore, and publish artifacts</li>
+                        <li>HTTP 500 at startup: appsettings, SQL auth, missing runtime dependency</li>
+                        <li>Run fails before install: WinRM/Kerberos/network path issues</li>
+                    </ul>
+                </section>
+
+                <section id="troubleshooting">
+                    <h2>11. Common Issues and Fixes</h2>
+                    <h3>AWS VPC/Subnet routing issue (critical)</h3>
+                    <ul>
+                        <li>Symptom: <code>Test-NetConnection target -Port 5985/5986</code> fails from app host, but target local WinRM config is correct</li>
+                        <li>Root cause: no route/ACL path between source and target subnets/VPCs</li>
+                        <li>Fix: update route tables + SG/NACL rules for source to target WinRM path and return traffic</li>
+                    </ul>
+                    <h3>SQL login failures for app pool identity</h3>
+                    <ul>
+                        <li>Symptom: cannot open database for <code>IIS APPPOOL\...</code> or service identity</li>
+                        <li>Fix: grant DB login/user rights or move app pool to approved domain service account</li>
+                    </ul>
+                    <h3>Connection pool exhaustion</h3>
+                    <ul>
+                        <li>Symptom: timeout waiting for pooled connection</li>
+                        <li>Fix: tune Hangfire worker count, SQL pool size, and retry settings</li>
+                    </ul>
+                    <h3>JSON cycle serialization</h3>
+                    <ul>
+                        <li>Symptom: object cycle detected on scan endpoint</li>
+                        <li>Fix: return flattened DTOs for API responses (already implemented)</li>
+                    </ul>
+                    <h3>Multiple cascade path DB errors</h3>
+                    <ul>
+                        <li>Symptom: SQL migration create table/foreign key fails</li>
+                        <li>Fix: enforce restricted delete behaviors in EF model and regenerate script</li>
+                    </ul>
+                    <h3>WinRM trusted hosts / auth confusion</h3>
+                    <ul>
+                        <li>Symptom: default credentials fail over HTTP</li>
+                        <li>Fix: prefer domain Kerberos with FQDN and valid SPN/name path; verify network reachability first</li>
+                    </ul>
+                </section>
+
+                <section id="hardening">
+                    <h2>12. Recommended Hardening</h2>
+                    <ul>
+                        <li>Use dedicated service account and least privilege access model</li>
+                        <li>Restrict admin roles in app and audit run actions</li>
+                        <li>Enforce TLS for app access and secure SQL transport where feasible</li>
+                        <li>Standardize WinRM configuration through GPO baselines</li>
+                        <li>Add environment-specific backup/restore and DR runbooks</li>
+                    </ul>
+                </section>
+            </article>
+        </section>
+    </main>
+</body>
+</html>

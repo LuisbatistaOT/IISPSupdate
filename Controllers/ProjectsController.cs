@@ -35,6 +35,10 @@ public class ProjectsController : Controller
             var allPreflightDone = serverCount == 0 || p.Servers.All(s =>
                 s.PreFlightStatus == PreFlightStatus.Success || s.PreFlightStatus == PreFlightStatus.Failed);
             var latestRun = p.Runs.OrderByDescending(r => r.CreatedAtUtc).FirstOrDefault();
+            var isScheduled = latestRun != null
+                && latestRun.Status == RunStatus.Queued
+                && latestRun.ScheduledForUtc.HasValue
+                && latestRun.ScheduledForUtc.Value > DateTime.UtcNow;
             var runCompleted = latestRun != null && (
                 latestRun.Status == RunStatus.Completed || latestRun.Status == RunStatus.Failed ||
                 latestRun.Status == RunStatus.Cancelled);
@@ -43,7 +47,7 @@ public class ProjectsController : Controller
 
             string preflightStatus = serverCount == 0 ? "—" : allPreflightDone ? "Completed" : "In progress";
             string updateStatus = latestRun == null ? "Not started" :
-                runInProgress ? "In progress" : runCompleted ? "Completed" : "Not started";
+                isScheduled ? "Scheduled" : runInProgress ? "In progress" : runCompleted ? "Completed" : "Not started";
 
             return new ProjectListItem
             {

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sloth - W2 Patch Manager</title>
+    <link rel="icon" type="image/png" href="/assets/favicon" />
+    <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+    <header class="top-nav">
+        <div class="top-nav-inner">
+            <div class="brand">
+                <img src="/assets/logo" alt="Sloth logo" class="brand-logo" />
+                <div class="brand-text">Sloth - W2 Patch Manager</div>
+            </div>
+            <nav class="top-nav-links" aria-label="Primary">
+                <a href="/Webpage/docs.html">Documentation</a>
+                <a href="/hangfire" target="_blank" rel="noopener noreferrer">Hangfire</a>
+                <a href="/Projects">Projects</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="page-shell">
+        <section class="hero card">
+            <div class="hero-content">
+                <div class="hero-logo-wrap">
+                    <img src="/assets/logo" alt="Sloth mascot" class="hero-logo" />
+                </div>
+                <div class="hero-text">
+                    <h1>Welcome to Sloth - W2 Patch Manager</h1>
+                    <p>Automating Windows patching with pura vida calmness.</p>
+                    <p class="hero-quick-link">
+                        Need setup or troubleshooting help?
+                        <a href="/Webpage/docs.html">Open the full documentation</a>.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <section class="summary-grid">
+            <article class="card metric-card">
+                <h2>Projects Configured</h2>
+                <div class="metric-value" id="projectsConfiguredValue">13</div>
+            </article>
+            <article class="card metric-card">
+                <h2>Servers Updated</h2>
+                <div class="metric-value" id="serversUpdatedValue">0</div>
+            </article>
+            <article class="card metric-card">
+                <h2>Pending Updates</h2>
+                <div class="metric-value" id="pendingUpdatesValue">9</div>
+            </article>
+        </section>
+
+        <section class="content-grid">
+            <article class="card kb-panel">
+                <h2>Top KBs (all time)</h2>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>KB</th>
+                                <th>Count</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="2" class="muted-cell">Loading...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </article>
+
+            <aside class="card project-panel">
+                <h2>Start New Project</h2>
+                <label for="projectId">Project ID</label>
+                <input id="projectId" type="text" placeholder="Enter Project ID" />
+                <button type="button" id="openProjectButton">Open</button>
+                <p class="project-help" id="projectOpenMessage"></p>
+            </aside>
+        </section>
+    </main>
+
+    <script>
+        function setText(id, value) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = String(value);
+        }
+
+        function renderTopKbs(topKbs) {
+            const tbody = document.querySelector(".kb-panel tbody");
+            if (!tbody) return;
+            tbody.innerHTML = "";
+
+            if (!topKbs || topKbs.length === 0) {
+                const row = document.createElement("tr");
+                row.innerHTML = '<td colspan="2" class="muted-cell">No data yet.</td>';
+                tbody.appendChild(row);
+                return;
+            }
+
+            topKbs.forEach((item) => {
+                const row = document.createElement("tr");
+                row.innerHTML = `<td>${item.kb ?? item.Kb ?? ""}</td><td>${item.count ?? item.Count ?? 0}</td>`;
+                tbody.appendChild(row);
+            });
+        }
+
+        async function loadDashboard() {
+            try {
+                const response = await fetch("/api/projects/dashboard", { credentials: "same-origin" });
+                if (!response.ok) {
+                    throw new Error("Dashboard request failed");
+                }
+
+                const data = await response.json();
+                setText("projectsConfiguredValue", data.totalProjects ?? data.TotalProjects ?? 0);
+                setText("serversUpdatedValue", data.serversUpdated ?? data.ServersUpdated ?? 0);
+                setText("pendingUpdatesValue", data.pendingUpdates ?? data.PendingUpdates ?? 0);
+                renderTopKbs(data.topKbs ?? data.TopKbs ?? []);
+            } catch (error) {
+                renderTopKbs([]);
+                const msg = document.getElementById("projectOpenMessage");
+                if (msg) {
+                    msg.textContent = "Could not load live dashboard data.";
+                }
+            }
+        }
+
+        function openProject() {
+            const input = document.getElementById("projectId");
+            const msg = document.getElementById("projectOpenMessage");
+            const value = (input?.value || "").trim();
+
+            if (!value) {
+                if (msg) msg.textContent = "Enter a Project ID first.";
+                return;
+            }
+
+            if (!/^\d+$/.test(value)) {
+                if (msg) msg.textContent = "Project ID must be numeric.";
+                return;
+            }
+
+            if (msg) msg.textContent = "";
+            window.location.href = `/Projects/Open/${value}`;
+        }
+
+        document.addEventListener("DOMContentLoaded", () => {
+            loadDashboard();
+            const btn = document.getElementById("openProjectButton");
+            const input = document.getElementById("projectId");
+            if (btn) btn.addEventListener("click", openProject);
+            if (input) {
+                input.addEventListener("keydown", (ev) => {
+                    if (ev.key === "Enter") openProject();
+                });
+            }
+        });
+    </script>
+</body>
+</html>
